@@ -2,7 +2,7 @@ name: Build-and-push
 on: push
 
 jobs:
-  object-service-build-and-push:
+  build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
