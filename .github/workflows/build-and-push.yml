@@ -20,5 +20,5 @@ jobs:
 
       - name: Build and Push object-service
         run: |
-          docker build -t mindwm/vector-image/vector-image:latest .
-          docker push mindwm/vector-image/vector-image:latest
+          docker build -t ghrc.io/mindwm/vector-image/vector-image:latest .
+          docker push ghrc.io/mindwm/vector-image/vector-image:latest
