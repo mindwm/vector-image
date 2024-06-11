@@ -1,0 +1,160 @@
+customConfig:
+  data_dir: /vector-data-dir
+  transforms:
+    cloudevent:
+      type: "lua"
+      version: "2"
+      inputs:
+        - neo4j-cdc
+      hooks:
+        process: process
+        init: seed_init
+      source: |
+        function seed_init() 
+          uuid = require("uuid")
+          local socket = require("socket")  -- gettime() has higher precision than os.time()
+          uuid.seed()
+        end
+        function process(event, emit)
+          local cloudevent = {}
+          cloudevent.log = {
+            id = uuid(),
+            data = event.log,
+            source = "graph." .. event.log["payload"]["type"] ,
+            specversion = "1.0",
+            datacontenttype = "application/json",
+            type = event.log["meta"]["operation"],
+            time = os.date("!%Y-%m-%dT%H:%M:%SZ", os.time()),
+
+            traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            tracestate = "rojo=00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01,congo=lZWRzIHRoNhcm5hbCBwbGVhc3VyZS4"
+          }
+          if (cloudevent.log.type == "created") then
+            if (event.log["payload"]["type"] == "node") then
+              if event.log["payload"]["after"]["labels"] then
+                cloudevent.log["subject"] = table.concat(event.log["payload"]["after"]["labels"], ",")
+                else
+                  cloudevent.log["subject"] = "unknown_node"
+              end
+            end
+            if (event.log["payload"]["type"] == "relationship") then
+              if (event.log["payload"]["label"]) then
+                  cloudevent.log["subject"] = event.log["payload"]["label"]
+                else
+                  cloudevent.log["subject"] = "unknown_relationship"
+              end
+            end
+          end
+          emit(cloudevent)
+        end
+
+  api:
+    enabled: true
+    address: 127.0.0.1:8686
+    playground: false
+  sources:
+    http_server:
+      address: 0.0.0.0:6000
+      encoding: json
+      path: /event
+      type: http_server
+#NAME                           TOPICS                 BOOTSTRAPSERVERS              READY   REASON   AGE
+#context-broker-team-a-source   ["team-a-cdc-topic"]   ["neo4j-cdc.redpanda:9093"]   True             23h
+    neo4j-cdc:
+      type: kafka
+      bootstrap_servers: "neo4j-cdc.redpanda:9093"
+      group_id: team-a-vector
+      #key_field: message_key
+      topics:
+        - team-a-cdc-topic
+      decoding:
+        codec: json
+      librdkafka_options:
+        api.version.request: 'true'
+        partition.assignment.strategy: roundrobin
+        log_level: '6'
+        session.timeout.ms: '10000'
+        max.poll.interval.ms: '300000'
+        socket.nagle.disable: 'false'
+        socket.keepalive.enable: 'true'
+        socket.max.fails: '3'
+        fetch.min.bytes: '1000000'
+  sinks:
+    stdout:
+      type: console
+      inputs: [cloudevent]
+      encoding:
+        codec: json
+
+    test:
+      type: http
+      inputs: [cloudevent]
+      encoding:
+        codec: json
+      method: post
+
+      batch:
+        max_size: 1
+        max_events: 1
+      framing:
+        method: "newline_delimited"
+      #uri: http://broker-ingress.knative-eventing.svc.cluster.local/context-team-a/context-broker-team-a
+      uri: https://knative.requestcatcher.com/test 
+      request:
+        concurrency: 1
+        headers:
+          "Content-Type": "application/cloudevents+json"
+
+    context-broker:
+      type: http
+      inputs: [cloudevent]
+      encoding:
+        codec: json
+      method: post
+      batch:
+        max_size: 1
+        max_events: 1
+      framing:
+        method: "newline_delimited"
+      uri: http://broker-ingress.knative-eventing.svc.cluster.local/context-team-a/context-broker-team-a
+      request:
+        concurrency: 1
+        headers:
+          "Content-Type": "application/cloudevents+json"
+
+image:
+  repository: timberio/vector
+  tag: 0.26.0-alpine
+service:
+  enabled: true
+  ports:
+    - name: aggregator
+      port: 31399
+      protocol: TCP
+      targetPort: 31399
+    - name: http-server
+      port: 6000
+      protocol: TCP
+      targetPort: 31398
+  type: ClusterIP
+serviceHeadless:
+  enabled: false
+
+image:
+  repository: ghcr.io/mindwm/vector-image/vector-image
+  #tag: 0.26.0-alpine
+  tag: main
+service:
+  enabled: true
+  ports:
+    - name: aggregator
+      port: 31399
+      protocol: TCP
+      targetPort: 31399
+    - name: http-server
+      port: 6000
+      protocol: TCP
+      targetPort: 31398
+  type: ClusterIP
+serviceHeadless:
+  enabled: false
